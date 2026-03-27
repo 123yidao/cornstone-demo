@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8">
+  <title>本地 DICOM 文件预览器（支持多文件）</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 20px;
+      background: #f4f4f4;
+    }
+
+    h1 {
+      text-align: center;
+    }
+
+    #drop-zone {
+      border: 4px dashed #ccc;
+      padding: 40px;
+      text-align: center;
+      margin: 20px auto;
+      width: 80%;
+      background: #fff;
+      border-radius: 10px;
+    }
+
+    #drop-zone.highlight {
+      border-color: #2196F3;
+      background: #e3f2fd;
+    }
+
+    .series-container {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 20px;
+      justify-content: center;
+      margin-top: 30px;
+    }
+
+    .series {
+      background: white;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      padding: 10px;
+      width: 500px;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    }
+
+    .series h3 {
+      margin: 0 0 10px 0;
+      text-align: center;
+    }
+
+    .viewport {
+      width: 100%;
+      height: 500px;
+      background: black;
+    }
+
+    .tools {
+      text-align: center;
+      margin-top: 8px;
+    }
+
+    button {
+      padding: 6px 12px;
+      margin: 0 4px;
+    }
+  </style>
+  <!-- 1. DICOM Parser -->
+  <script src="https://cdn.jsdelivr.net/npm/dicom-parser@1.8.21/dist/dicomParser.min.js"></script>
+
+  <!-- 2. Cornerstone WADO Image Loader -->
+  <script
+    src="https://cdn.jsdelivr.net/npm/cornerstone-wado-image-loader@4.13.2/dist/dynamic-import/cornerstoneWADOImageLoader.min.js"></script>
+
+  <!-- 3. Cornerstone3D Core - UMD 版本（会挂载 window.cornerstoneCore） -->
+  <script src="https://cdn.jsdelivr.net/npm/@cornerstonejs/core@2.19.0/dist/esm/cornerstoneCore.min.js"></script>
+
+  <!-- 4. Cornerstone3D Tools - UMD 版本（会挂载 window.cornerstoneTools） -->
+  <script src="https://cdn.jsdelivr.net/npm/@cornerstonejs/tools@2.19.0/dist/esm/cornerstoneTools.min.js"></script>
+</head>
+
+<body>
+  <h1>本地 DICOM 文件多文件预览器</h1>
+
+  <div id="drop-zone">
+    <p>点击或将 DICOM 文件拖拽到此处（支持多个文件）</p>
+    <input type="file" id="file-input" multiple accept=".dcm,application/dicom" style="display:none;">
+    <button onclick="document.getElementById('file-input').click()">选择文件</button>
+  </div>
+
+  <div id="series-container" class="series-container"></div>
+
+  <script>
+    // 全局对象（CDN 动态导入版本会挂载到这里）
+    window.addEventListener('load', async function () {
+      if (!window.cornerstoneCore || !window.cornerstoneTools) {
+        alert('Cornerstone 库加载失败，请检查网络或刷新页面');
+        console.error('cornerstoneCore:', window.cornerstoneCore);
+        console.error('cornerstoneTools:', window.cornerstoneTools);
+        return;
+      }
+      const {
+        RenderingEngine,
+        Enums,
+        init: coreInit,
+        volumeLoader,
+        setVolumesForViewports,
+        cache,
+        getEnabledElement // 新增，可能用到
+      } = window.cornerstoneCore;
+
+      const {
+        init: toolsInit,
+        ToolGroupManager,
+        WindowLevelTool,
+        PanTool,
+        ZoomTool,
+        VolumeRotateMouseWheelTool,
+        addTool
+      } = window.cornerstoneTools;
+      initCornerstone().then(() => {
+        console.log('Cornerstone3D 初始化完成，可以上传 DICOM 文件了');
+      });
+    });
+
+    // 初始化 Cornerstone
+    async function initCornerstone () {
+      await coreInit();
+      await toolsInit();
+
+      // 配置 WADO Image Loader（必须）
+      window.cornerstoneWADOImageLoader.external.cornerstone = window.cornerstoneCore;
+      window.cornerstoneWADOImageLoader.external.dicomParser = window.dicomParser;
+
+      window.cornerstoneWADOImageLoader.configure({
+        decodeConfig: { convertFloatPixelDataToInt: false }
+      });
+
+      // 注册工具
+      addTool(WindowLevelTool);
+      addTool(PanTool);
+      addTool(ZoomTool);
+      addTool(VolumeRotateMouseWheelTool);
+    }
+
+    // 其余代码保持不变（fileToImageId、groupBySeries、createViewport 等函数）
+    // ...（直接复制你原来的函数内容）
+
+    // 将 File 对象转为 imageId
+    function fileToImageId (file) {
+      const fileName = file.name || 'dicomfile';
+      return `wadouri:${URL.createObjectURL(file)}`;
+    }
+
+    // 按系列分组（保持原样）
+    function groupBySeries (imageIds) {
+      const seriesMap = new Map();
+      const promises = imageIds.map(async (imageId) => {
+        const image = await cornerstoneCore.loadImage(imageId); // 这里用 cornerstoneCore
+        const metadata = image.metadata || {};
+        const seriesUID = metadata.SeriesInstanceUID || 'unknown';
+        if (!seriesMap.has(seriesUID)) seriesMap.set(seriesUID, []);
+        seriesMap.get(seriesUID).push(imageId);
+      });
+      return Promise.all(promises).then(() => {
+        return Array.from(seriesMap.entries()).map(([uid, ids]) => ({
+          seriesUID: uid,
+          imageIds: ids.sort((a, b) => {
+            const loadA = cornerstoneCore.cache.getImageLoadObject(a);
+            const loadB = cornerstoneCore.cache.getImageLoadObject(b);
+            return (loadA?.image?.InstanceNumber || 0) - (loadB?.image?.InstanceNumber || 0);
+          })
+        }));
+      });
+    }
+
+    // createViewport 函数中也需要小改（示例）
+    async function createViewport (series, index) {
+      // ... 创建 container 的代码保持不变
+
+      const element = document.getElementById(`viewport-${index}`);
+
+      const renderingEngineId = `engine-${index}`;
+      const renderingEngine = new RenderingEngine(renderingEngineId);
+
+      const viewportId = `viewport-${index}`;
+      const viewportInput = {
+        viewportId,
+        element,
+        type: Enums.ViewportType.ORTHOGRAPHIC,
+      };
+      renderingEngine.enableElement(viewportInput);
+
+      const viewport = renderingEngine.getViewport(viewportId);
+
+      const volumeId = `volume-${index}`;
+      await volumeLoader.createAndCacheVolume(volumeId, { imageIds: series.imageIds });
+
+      await setVolumesForViewports(renderingEngine, [{ volumeId }], [viewportId]);
+
+      viewport.setCamera({ parallelScale: 200 });
+      viewport.render();
+
+      // 工具组
+      const toolGroupId = `toolGroup-${index}`;
+      const toolGroup = ToolGroupManager.createToolGroup(toolGroupId);
+      toolGroup.addTool(WindowLevelTool.toolName);
+      toolGroup.addTool(PanTool.toolName);
+      toolGroup.addTool(ZoomTool.toolName);
+      toolGroup.addTool(VolumeRotateMouseWheelTool.toolName);
+
+      toolGroup.setToolActive(WindowLevelTool.toolName, { mouseButtonMask: 1 });
+      toolGroup.setToolActive(PanTool.toolName, { mouseButtonMask: 2 });
+      toolGroup.setToolActive(ZoomTool.toolName, { mouseButtonMask: 4 });
+      toolGroup.setToolPassive(VolumeRotateMouseWheelTool.toolName);
+
+      toolGroup.addViewport(viewportId, renderingEngineId);
+    }
+
+    // resetViewport 函数也需要改
+    window.resetViewport = function (index) {
+      const enabledElement = getEnabledElement(`viewport-${index}`);
+      if (enabledElement) {
+        const viewport = enabledElement.viewport;
+        viewport.resetCamera();
+        viewport.render();
+      }
+    };
+
+    // handleFiles、拖拽事件等保持不变
+
+    // // 初始化
+    // initCornerstone().then(() => {
+    //   console.log('Cornerstone3D 初始化完成，可以上传 DICOM 文件了');
+    // });
+  </script>
+</body>
+
+</html>
