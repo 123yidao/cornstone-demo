@@ -5,8 +5,8 @@
   "private": true,
   "scripts": {
     "dev": "vue-cli-service serve",
-    "build": "../../node_modules/.bin/vue-cli-service build",
-    "lint": "../../node_modules/.bin/vue-cli-service lint"
+    "build": "vue-cli-service build",
+    "lint": "vue-cli-service lint"
   },
   "dependencies": {
     "@cornerstonejs/adapters": "^2.19.0",
