@@ -1,5 +1,5 @@
 {
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
-   "nodejs": "16.x"
+   "nodejs": "18.x"
 }
